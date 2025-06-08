@@ -2,10 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
+
+type Config struct {
+	WorkerCount    int `json:"worker_count"`
+	TaskBufferSize int `json:"task_buffer_size"`
+}
 
 type Task string
 
@@ -21,7 +29,7 @@ func (w *Worker) Start(ctx context.Context, tasks <-chan Task, wg *sync.WaitGrou
 			select {
 			case task := <-tasks:
 				fmt.Printf("Worker #%d processing task: %s\n", w.id, task)
-				time.Sleep(500 * time.Millisecond) // имитация работы
+				time.Sleep(500 * time.Millisecond)
 			case <-ctx.Done():
 				fmt.Printf("Worker #%d received shutdown signal\n", w.id)
 				return
@@ -31,18 +39,17 @@ func (w *Worker) Start(ctx context.Context, tasks <-chan Task, wg *sync.WaitGrou
 }
 
 type WorkerPool struct {
-	tasks     chan Task
-	workers   []*Worker
-	mu        sync.Mutex
-	nextID    int
-	wg        sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
-	startOnce sync.Once
+	tasks   chan Task
+	workers []*Worker
+	mu      sync.Mutex
+	nextID  int
+	wg      sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
-func NewWorkerPool(bufferSize int) *WorkerPool {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewWorkerPool(ctx context.Context, bufferSize int) *WorkerPool {
+	ctx, cancel := context.WithCancel(ctx)
 	return &WorkerPool{
 		tasks:  make(chan Task, bufferSize),
 		ctx:    ctx,
@@ -77,24 +84,37 @@ func (p *WorkerPool) ShutdownGracefully() {
 	fmt.Println("All workers stopped.")
 }
 
+func loadConfig(path string) (Config, error) {
+	var cfg Config
+	file, err := os.Open(path)
+	if err != nil {
+		return cfg, err
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(&cfg)
+	return cfg, err
+}
+
 func main() {
-	pool := NewWorkerPool(10)
-
-	pool.AddWorker()
-	pool.AddWorker()
-
-	for i := 0; i < 5; i++ {
-		pool.Submit(Task(fmt.Sprintf("Task #%d", i)))
+	cfg, err := loadConfig("config.json")
+	if err != nil {
+		fmt.Println("Error loading config:", err)
+		return
 	}
 
-	time.Sleep(2 * time.Second)
+	ctx := context.Background()
+	pool := NewWorkerPool(ctx, cfg.TaskBufferSize)
 
-	pool.AddWorker()
-
-	for i := 5; i < 10; i++ {
-		pool.Submit(Task(fmt.Sprintf("Task #%d", i)))
+	for i := 0; i < cfg.WorkerCount; i++ {
+		pool.AddWorker()
 	}
 
-	time.Sleep(2 * time.Second)
+	for i := 0; i < 10; i++ {
+		pool.Submit(Task("Task #" + strconv.Itoa(i)))
+	}
+
+	time.Sleep(3 * time.Second)
 	pool.ShutdownGracefully()
 }

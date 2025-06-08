@@ -1,0 +1,4 @@
+{
+  "worker_count": 3,
+  "task_buffer_size": 10
+}
